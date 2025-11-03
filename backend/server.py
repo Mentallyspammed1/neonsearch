@@ -114,27 +114,15 @@ class SearchCache:
 
 search_cache = SearchCache()
 
-# API Configurations - can be updated via admin endpoint
-API_CONFIGS = {
-    "pornhub": {
+# Initialize drivers dynamically
+API_CONFIGS = {}
+for name, driver_class in DRIVER_REGISTRY.items():
+    driver = driver_class()
+    API_CONFIGS[name] = {
         "enabled": True,
-        "base_url": "https://www.pornhub.com",
-        "search_endpoint": "/webmasters/search",
-        "requires_key": False
-    },
-    "youjizz": {
-        "enabled": True,
-        "base_url": "https://www.youjizz.com",
-        "search_endpoint": "/search",
-        "requires_key": False
-    },
-    "spankbang": {
-        "enabled": True,
-        "base_url": "https://spankbang.com",
-        "search_endpoint": "/s",
-        "requires_key": False
+        "driver": driver,
+        "base_url": getattr(driver, 'base_url', None) if hasattr(driver, 'base_url') else None
     }
-}
 
 
 # ============================================
