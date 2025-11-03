@@ -13,18 +13,40 @@ BASE_PLATFORM_URL = 'https://www.xvideos.com'
 
 
 class XvideosDriver(AbstractModule):
-    """Driver for Xvideos platform."""
+    """Driver for Xvideos platform.
+
+    This class handles searching for videos on Xvideos, parsing the search results,
+    and extracting relevant video information such as title, URL, thumbnail, and duration.
+    """
     
     @property
     def name(self) -> str:
+        """Get the name of the platform.
+
+        Returns:
+            str: The name of the platform, 'Xvideos'.
+        """
         return 'Xvideos'
     
     @property
     def first_page(self) -> int:
+        """Get the default starting page number for searches.
+
+        Returns:
+            int: The default page number, typically 0 for Xvideos.
+        """
         return 0  # Xvideos starts from page 0
     
     def video_url(self, query: str, page: int) -> str:
-        """Generate video search URL."""
+        """Generate the search URL for videos on Xvideos.
+
+        Args:
+            query (str): The search query string.
+            page (int): The page number for the search results.
+
+        Returns:
+            str: The constructed URL for the video search on Xvideos.
+        """
         page = max(0, page if page is not None else self.first_page)
         params = {
             'k': query.strip(),
@@ -33,12 +55,23 @@ class XvideosDriver(AbstractModule):
         return f"{BASE_PLATFORM_URL}/?{urlencode(params)}"
     
     def video_parser(self, html: str) -> List[Dict[str, Any]]:
-        """Parse video search results from HTML."""
+        """Parse the HTML content of an Xvideos search results page to extract video data.
+
+        Args:
+            html (str): The HTML content of the search results page.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, where each dictionary
+                                  represents a video and contains extracted details
+                                  like title, URL, thumbnail, duration, etc.
+        """
+        logger.debug(f"{self.name} video parsing started.")
         results = []
         soup = BeautifulSoup(html, 'html.parser')
         
         items = soup.find_all('div', class_=['thumb-block', 'thumb'])
         if not items:
+            logger.debug(f"{self.name} found no video items.")
             return results
         
         for item in items:
@@ -64,8 +97,12 @@ class XvideosDriver(AbstractModule):
                 thumb = img.get('data-src') or img.get('src') if img else None
                 
                 # Extract duration
-                duration_elem = item.find('span', class_='duration')
-                duration = duration_elem.get_text(strip=True) if duration_elem else 'N/A'
+                duration_elem = item.find('p', class_='metadata')
+                duration = 'N/A'
+                if duration_elem:
+                    duration_text = duration_elem.get_text(strip=True)
+                    duration_match = re.search(r'(\d+:\d+)', duration_text)
+                    duration = duration_match.group(1) if duration_match else 'N/A'
                 
                 # Validate essential fields
                 if not video_id or not url or not title or not thumb:

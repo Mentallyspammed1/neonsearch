@@ -13,25 +13,53 @@ BASE_PLATFORM_URL = 'https://spankbang.com'
 
 
 class SpankBangDriver(AbstractModule):
-    """Driver for SpankBang platform."""
+    """Driver for SpankBang platform.
+
+    This class handles searching for videos on SpankBang, parsing the search results,
+    and extracting relevant video information such as title, URL, thumbnail, and duration.
+    """
     
     @property
     def name(self) -> str:
+        """Get the name of the platform.
+
+        Returns:
+            str: The name of the platform, 'SpankBang'.
+        """
         return 'SpankBang'
     
     def video_url(self, query: str, page: int) -> str:
-        """Generate video search URL."""
+        """Generate the search URL for videos on SpankBang.
+
+        Args:
+            query (str): The search query string.
+            page (int): The page number for the search results.
+
+        Returns:
+            str: The constructed URL for the video search on SpankBang.
+        """
         page = max(1, page if page else self.first_page)
         query_encoded = quote_plus(query.strip())
         return f"{BASE_PLATFORM_URL}/s/{query_encoded}/{page}/"
     
     def video_parser(self, html: str) -> List[Dict[str, Any]]:
-        """Parse video search results from HTML."""
+        """Parse the HTML content of a SpankBang search results page to extract video data.
+
+        Args:
+            html (str): The HTML content of the search results page.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, where each dictionary
+                                  represents a video and contains extracted details
+                                  like title, URL, thumbnail, duration, etc.
+        """
+        logger.debug(f"{self.name} video parsing started.")
         results = []
         soup = BeautifulSoup(html, 'html.parser')
         
         items = soup.find_all('div', class_='video-item')
         if not items:
+            logger.debug(f"{self.name} found no video items.")
             return results
         
         for item in items:

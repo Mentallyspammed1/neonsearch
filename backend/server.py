@@ -13,6 +13,8 @@ import httpx
 import asyncio
 from functools import lru_cache
 import hashlib
+from contextlib import asynccontextmanager
+import random # Added for shuffling results
 
 # Import video source drivers
 from drivers import get_driver, get_all_drivers, DRIVER_REGISTRY
@@ -21,13 +23,38 @@ from drivers import get_driver, get_all_drivers, DRIVER_REGISTRY
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+# Configure logging (ONLY ONCE)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+# FastAPI lifespan manager (ONLY ONCE)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("FastAPI app lifespan: startup") # Added log
+    # Startup logic (if any)
+    yield
+    logger.info("FastAPI app lifespan: shutdown") # Added log
+    client.close()
+
+# Create the main app (ONLY ONCE)
+app = FastAPI(lifespan=lifespan)
+
+# CORS Middleware (apply to the ONE app instance)
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -72,12 +99,6 @@ class SearchResponse(BaseModel):
     page: int
     sources_searched: List[str]
 
-class APIConfig(BaseModel):
-    name: str
-    enabled: bool
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
-
 
 # ============================================
 # Cache and API Configuration
@@ -98,7 +119,9 @@ class SearchCache:
         key = self._make_key(query, sources, page)
         if key in self.cache:
             self.access_times[key] = datetime.now()
+            logger.info(f"Cache hit for key: {key}") # Added log
             return self.cache[key]
+        logger.info(f"Cache miss for key: {key}") # Added log
         return None
     
     def set(self, query: str, sources: List[str], page: int, data: Dict):
@@ -109,6 +132,7 @@ class SearchCache:
             del self.cache[oldest_key]
             del self.access_times[oldest_key]
         
+        logger.info(f"Cache set for key: {key}")
         self.cache[key] = data
         self.access_times[key] = datetime.now()
 
@@ -139,8 +163,9 @@ async def fetch_with_retry(url: str, params: dict, max_retries: int = 3) -> Opti
                 return response.json()
             except Exception as e:
                 if attempt == max_retries - 1:
-                    logger.error(f"Failed to fetch from {url} after {max_retries} attempts: {str(e)}")
+                    logger.error(f"Failed to fetch from {url} after {max_retries} attempts: {str(e)}", exc_info=True) # Added exc_info
                     return None
+                logger.warning(f"Attempt {attempt+1}/{max_retries} failed for {url}. Retrying in {2**attempt}s...") # Added log
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
         return None
 
@@ -148,6 +173,7 @@ async def fetch_with_retry(url: str, params: dict, max_retries: int = 3) -> Opti
 async def search_source(source: str, query: str, page: int, limit: int) -> List[Video]:
     """Search a specific video source using its driver"""
     if source not in API_CONFIGS or not API_CONFIGS[source]["enabled"]:
+        logger.debug(f"Source '{source}' is disabled or not found. Skipping.") # Added log
         return []
     
     config = API_CONFIGS[source]
@@ -160,6 +186,7 @@ async def search_source(source: str, query: str, page: int, limit: int) -> List[
     try:
         # Get the search URL from the driver
         search_url = driver.video_url(query, page)
+        logger.info(f"Searching {source} at URL: {search_url}") # Added log
         
         # Fetch HTML content
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
@@ -169,27 +196,30 @@ async def search_source(source: str, query: str, page: int, limit: int) -> List[
                 })
                 response.raise_for_status()
                 html_content = response.text
+                logger.debug(f"Successfully fetched HTML content from {source}.") # Added log
             except Exception as e:
-                logger.error(f"Failed to fetch from {source}: {str(e)}")
+                logger.error(f"Failed to fetch HTML from {source} at {search_url}: {str(e)}", exc_info=True) # Added exc_info
                 return []
         
         # Parse results using driver's parser
         raw_results = driver.video_parser(html_content)
+        logger.debug(f"Parsed {len(raw_results)} raw results from {source}.") # Added log
         
         # Convert to Video models
         videos = []
-        for result in raw_results[:limit]:
+        for i, result in enumerate(raw_results[:limit]):
             try:
                 video = Video(**result)
                 videos.append(video)
             except Exception as e:
-                logger.error(f"Error creating Video model: {str(e)}")
+                logger.error(f"Error creating Video model for result #{i+1} from {source} (title: {result.get('title', 'N/A')}): {str(e)}", exc_info=True) # Added exc_info
                 continue
         
+        logger.info(f"Successfully processed {len(videos)} videos from {source}.") # Added log
         return videos
         
     except Exception as e:
-        logger.error(f"Error searching {source}: {str(e)}")
+        logger.error(f"An unexpected error occurred during search for {source}: {str(e)}", exc_info=True) # Added exc_info
         return []
 
 
@@ -199,6 +229,7 @@ async def search_source(source: str, query: str, page: int, limit: int) -> List[
 
 @api_router.get("/")
 async def root():
+    logger.info("Root endpoint called.") # Added log
     return {"message": "Video Search API", "version": "1.0.0"}
 
 
@@ -213,22 +244,28 @@ async def search_videos(request: VideoSearchRequest):
     - **page**: Page number for pagination
     - **limit**: Results per page
     """
+    logger.info(f"Received search request: query='{request.query}', sources={request.sources}, page={request.page}, limit={request.limit}") # Added log
     try:
-        # Check cache first
         sources_to_search = request.sources if request.sources and request.sources != ["all"] else list(API_CONFIGS.keys())
+        
+        # Check cache first
         cached_result = search_cache.get(request.query, sources_to_search, request.page)
         
         if cached_result:
-            logger.info(f"Cache hit for query: {request.query}")
+            # Cache hit log is handled within search_cache.get
             return cached_result
+        
+        logger.info(f"Cache miss for query: {request.query}. Searching active sources: {sources_to_search}") # Added log
         
         # Filter enabled sources
         active_sources = [s for s in sources_to_search if s in API_CONFIGS and API_CONFIGS[s]["enabled"]]
         
         if not active_sources:
+            logger.warning("No active video sources available for search.") # Added log
             raise HTTPException(status_code=400, detail="No active video sources available")
         
         # Search all sources concurrently
+        logger.info(f"Initiating concurrent search for query '{request.query}' across sources: {active_sources}") # Added log
         search_tasks = [
             search_source(source, request.query, request.page, request.limit)
             for source in active_sources
@@ -243,7 +280,6 @@ async def search_videos(request: VideoSearchRequest):
         
         # Sort by relevance (you can implement custom scoring)
         # For now, just shuffle to mix sources
-        import random
         random.shuffle(all_videos)
         
         # Apply pagination
@@ -261,17 +297,21 @@ async def search_videos(request: VideoSearchRequest):
         # Cache the result
         search_cache.set(request.query, sources_to_search, request.page, response.dict())
         
-        logger.info(f"Search completed: query='{request.query}', results={len(paginated_videos)}")
+        logger.info(f"Search completed for query='{request.query}'. Found {len(paginated_videos)} results (total available: {len(all_videos)}).") # Modified log
         return response
         
+    except HTTPException as http_exc:
+        logger.error(f"HTTP Exception during search for query='{request.query}': {http_exc.detail}", exc_info=True) # Added log
+        raise http_exc
     except Exception as e:
-        logger.error(f"Search error: {str(e)}")
+        logger.error(f"An unexpected error occurred during search for query='{request.query}': {str(e)}", exc_info=True) # Added exc_info
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 @api_router.get("/sources")
-async def get_sources():
+def get_sources_status(): # Changed from async def to def as it doesn't use await
     """Get available video sources and their status"""
+    logger.info("Received request for available sources.") # Added log
     return {
         "sources": [
             {
@@ -287,19 +327,24 @@ async def get_sources():
 @api_router.post("/sources/{source_name}/toggle")
 async def toggle_source(source_name: str):
     """Enable or disable a video source"""
+    logger.info(f"Received request to toggle source: {source_name}") # Added log
     if source_name not in API_CONFIGS:
+        logger.warning(f"Attempted to toggle unknown source: {source_name}") # Added log
         raise HTTPException(status_code=404, detail="Source not found")
     
     API_CONFIGS[source_name]["enabled"] = not API_CONFIGS[source_name]["enabled"]
+    new_status = API_CONFIGS[source_name]["enabled"]
+    logger.info(f"Toggled source '{source_name}'. New status: {'enabled' if new_status else 'disabled'}") # Added log
     return {
         "source": source_name,
-        "enabled": API_CONFIGS[source_name]["enabled"]
+        "enabled": new_status
     }
 
 
 @api_router.get("/suggestions")
 async def get_search_suggestions(q: str):
     """Get search suggestions based on query"""
+    logger.info(f"Received request for search suggestions for query: '{q}'") # Added log
     # Mock suggestions - in production, use analytics or trending data
     suggestions = [
         f"{q} hd",
@@ -314,45 +359,38 @@ async def get_search_suggestions(q: str):
 # Original routes
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
+    logger.info(f"Received request to create status check for client: {input.client_name}") # Added log
+    status_obj = StatusCheck(**input.model_dump()) # Use model_dump directly for Pydantic v2
     
     doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
+    # Store timestamp as ISO string for easier MongoDB compatibility
+    doc['timestamp'] = doc['timestamp'].isoformat() 
     
-    _ = await db.status_checks.insert_one(doc)
+    try:
+        await db.status_checks.insert_one(doc)
+        logger.info(f"Successfully created status check with ID: {status_obj.id}") # Added log
+    except Exception as e:
+        logger.error(f"Failed to insert status check into MongoDB: {str(e)}", exc_info=True) # Added exc_info
+        raise HTTPException(status_code=500, detail="Failed to save status check")
+        
     return status_obj
 
 
 @api_router.get("/status", response_model=List[StatusCheck])
 async def get_status_checks():
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
+    logger.info("Received request to retrieve status checks.") # Added log
     
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+    # Fetch from MongoDB
+    try:
+        status_checks_from_db = await db.status_checks.find().sort("timestamp", -1).limit(100).to_list(length=100)
+        logger.info(f"Retrieved {len(status_checks_from_db)} status checks from MongoDB.") # Added log
+    except Exception as e:
+        logger.error(f"Failed to retrieve status checks from MongoDB: {str(e)}", exc_info=True) # Added exc_info
+        raise HTTPException(status_code=500, detail="Failed to retrieve status checks")
+
+    # Directly create StatusCheck objects, Pydantic will parse the timestamp string to datetime
+    return [StatusCheck(**check) for check in status_checks_from_db]
 
 
-# Include the router in the main app
+# Include the router in the main app (apply to the ONE app instance)
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

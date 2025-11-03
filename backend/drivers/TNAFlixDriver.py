@@ -13,23 +13,50 @@ BASE_PLATFORM_URL = 'https://www.tnaflix.com'
 
 
 class TNAFlixDriver(AbstractModule):
-    """Driver for TNAFlix platform."""
+    """Driver for TNAFlix platform.
+
+    This class handles searching for videos on TNAFlix, parsing the search results,
+    and extracting relevant video information such as title, URL, thumbnail, duration, and views.
+    """
     
     @property
     def name(self) -> str:
+        """Get the name of the platform.
+
+        Returns:
+            str: The name of the platform, 'TNAFlix'.
+        """
         return 'TNAFlix'
     
     def video_url(self, query: str, page: int) -> str:
-        """Generate video search URL."""
+        """Generate the search URL for videos on TNAFlix.
+
+        Args:
+            query (str): The search query string.
+            page (int): The page number for the search results.
+
+        Returns:
+            str: The constructed URL for the video search on TNAFlix.
+        """
         page = max(1, page if page else self.first_page)
         params = {
             'what': query.strip(),
             'page': str(page)
         }
+        logger.debug(f"TNAFlix video URL: query='{query}', page={page}")
         return f"{BASE_PLATFORM_URL}/search.php?{urlencode(params)}"
     
     def video_parser(self, html: str) -> List[Dict[str, Any]]:
-        """Parse video search results from HTML."""
+        """Parse the HTML content of a TNAFlix search results page to extract video data.
+
+        Args:
+            html (str): The HTML content of the search results page.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, where each dictionary
+                                  represents a video and contains extracted details
+                                  like title, URL, thumbnail, duration, views, etc.
+        """
         results = []
         soup = BeautifulSoup(html, 'html.parser')
         
