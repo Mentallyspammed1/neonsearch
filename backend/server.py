@@ -166,21 +166,51 @@ def create_mock_videos(query: str, source: str, count: int = 10) -> List[Video]:
 
 
 async def search_source(source: str, query: str, page: int, limit: int) -> List[Video]:
-    """Search a specific video source"""
+    """Search a specific video source using its driver"""
     if source not in API_CONFIGS or not API_CONFIGS[source]["enabled"]:
         return []
     
     config = API_CONFIGS[source]
+    driver = config.get("driver")
     
-    # For now, return mock data
-    # In production, this would call the actual API
-    videos_per_source = min(limit // len([s for s in API_CONFIGS if API_CONFIGS[s]["enabled"]]), 10)
-    mock_videos = create_mock_videos(query, source, videos_per_source)
+    if not driver:
+        logger.warning(f"No driver found for source: {source}")
+        return []
     
-    # Simulate API delay
-    await asyncio.sleep(0.1)
-    
-    return mock_videos
+    try:
+        # Get the search URL from the driver
+        search_url = driver.video_url(query, page)
+        
+        # Fetch HTML content
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            try:
+                response = await client.get(search_url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+                response.raise_for_status()
+                html_content = response.text
+            except Exception as e:
+                logger.error(f"Failed to fetch from {source}: {str(e)}")
+                return []
+        
+        # Parse results using driver's parser
+        raw_results = driver.video_parser(html_content)
+        
+        # Convert to Video models
+        videos = []
+        for result in raw_results[:limit]:
+            try:
+                video = Video(**result)
+                videos.append(video)
+            except Exception as e:
+                logger.error(f"Error creating Video model: {str(e)}")
+                continue
+        
+        return videos
+        
+    except Exception as e:
+        logger.error(f"Error searching {source}: {str(e)}")
+        return []
 
 
 # ============================================
