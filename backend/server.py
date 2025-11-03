@@ -297,7 +297,7 @@ async def get_sources():
             {
                 "name": name,
                 "enabled": config["enabled"],
-                "base_url": config["base_url"]
+                "driver_name": config["driver"].name if config.get("driver") else name.title()
             }
             for name, config in API_CONFIGS.items()
         ]
