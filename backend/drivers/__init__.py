@@ -4,6 +4,9 @@ from .XvideosDriver import XvideosDriver
 from .XnxxDriver import XnxxDriver
 from .SpankBangDriver import SpankBangDriver
 from .RedtubeDriver import RedtubeDriver
+from .EpornerDriver import EpornerDriver
+from .WowXXXDriver import WowXXXDriver
+from .TNAFlixDriver import TNAFlixDriver
 
 __all__ = [
     'PornhubDriver',
@@ -11,6 +14,9 @@ __all__ = [
     'XnxxDriver',
     'SpankBangDriver',
     'RedtubeDriver',
+    'EpornerDriver',
+    'WowXXXDriver',
+    'TNAFlixDriver',
 ]
 
 # Registry of all available drivers
@@ -20,6 +26,9 @@ DRIVER_REGISTRY = {
     'xnxx': XnxxDriver,
     'spankbang': SpankBangDriver,
     'redtube': RedtubeDriver,
+    'eporner': EpornerDriver,
+    'wowxxx': WowXXXDriver,
+    'tnaflix': TNAFlixDriver,
 }
 
 
