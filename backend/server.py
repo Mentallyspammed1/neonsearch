@@ -145,26 +145,6 @@ async def fetch_with_retry(url: str, params: dict, max_retries: int = 3) -> Opti
         return None
 
 
-def create_mock_videos(query: str, source: str, count: int = 10) -> List[Video]:
-    """Generate mock video data for demonstration"""
-    videos = []
-    for i in range(count):
-        video = Video(
-            id=f"{source}_{query}_{i}_{uuid.uuid4().hex[:8]}",
-            title=f"{query.title()} - Video {i+1} from {source.title()}",
-            thumbnail=f"https://picsum.photos/seed/{source}{i}/320/180",
-            url=f"https://{source}.com/view/{uuid.uuid4().hex}",
-            duration=f"{5 + (i % 30)}:{10 + (i % 50):02d}",
-            views=f"{(i+1) * 1000 + (i % 999):,}",
-            rating=round(3.5 + (i % 3) * 0.5, 1),
-            source=source,
-            upload_date="2 days ago" if i % 3 == 0 else "1 week ago",
-            channel=f"{source.title()} Channel {i % 5 + 1}"
-        )
-        videos.append(video)
-    return videos
-
-
 async def search_source(source: str, query: str, page: int, limit: int) -> List[Video]:
     """Search a specific video source using its driver"""
     if source not in API_CONFIGS or not API_CONFIGS[source]["enabled"]:
