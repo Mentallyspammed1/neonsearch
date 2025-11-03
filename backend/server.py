@@ -14,6 +14,9 @@ import asyncio
 from functools import lru_cache
 import hashlib
 
+# Import video source drivers
+from drivers import get_driver, get_all_drivers, DRIVER_REGISTRY
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
